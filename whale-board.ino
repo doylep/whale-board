@@ -29,8 +29,8 @@ const int prsPin = A6; // digital pin 4
 // Variables
 int state =1;
 long int start =0;
-String CUT = "cut";
-String SAFE_MOD = "safe";
+String CUT = "Cut@";
+String SAFE_MOD = "safe@";
 boolean flag = false;
 
 int rawPr = 0;
@@ -40,6 +40,7 @@ int y = 0;
 int z = 0;
 int temp1 = 0;
 int temp2 = 0;
+int analogcount;
 
 // Initialize parameters for SerialEvent
 String data="";
@@ -88,24 +89,27 @@ void setup()
 void loop()
 {
   aerocom:
+  // Skips listening to the aerocomm if in safe mode. 
+  if(flag) {
+    delay(1000);
+    goto sensors; // Do we want data as it's falling or just location?
+  }
+    
   start = millis();
   // Listen to the aerocomm for 5 seconds and write received data to xBee  
   while ( (start + WAIT_5) > millis() ) {
     aero.listen(); // first listen then for to serial event
+    delay(2);
     if (aero.available() > 0) 
     {
       Serial.println("Getting data from AeroComm");
-      serialEvent(aero, '@');
+      serialEvent(aero, '@');  
      
       // Check if recieved data is "cut" command otherwise do nothing!
       if(data.equalsIgnoreCase(CUT)) {
         xbee.print(data);
-        data = "";
         goto printData; // Save data first after cut command
-      }
-      xbee.listen(); // any point in listening to xbee?
-      delay(2);
-      
+      }    
 
       // If we switch to safemode after cut the wires
       // here is the part we only listen to gps and print data into data logger   ---   ??
@@ -113,19 +117,17 @@ void loop()
       if(data.equalsIgnoreCase(SAFE_MOD))
       {
         flag = true; // only safe mode
+        Serial.println("Entering Safe Mode");
         //go to GPS and print data from GPS
         goto gps;
         // do not need to read from sensors anymore  --- WHY NOT GET MORE DATA ON THE DECENT REGARDLESS?
       }
-      //** Why do you listen after serialevent?
-      //aero.listen();
-      //delay(2);
     }
   }
   
   
   sensors:
-  int analogcount = 0;
+  analogcount = 1; // Was there a reason this was started at 0?
   do
   {
   switch (analogcount){
@@ -171,8 +173,8 @@ void loop()
       }// End of reading from Sensors
       analogcount++; 
     }while(analogcount < 5);// End of for loop
-    goto printData;
-  
+    //goto printData; 
+    data += '\n'; 
 
   gps:
   // Listen to the GPS for 1 second and write received data to variable data
@@ -185,9 +187,7 @@ void loop()
       Serial.println("Getting GPS data");
       serialEvent(gps, '\n');
       Serial.println(data);
-      //if(flag) goto 
       goto printData;
-     // break; // ** you wanna listen to gps for 1 sec why do you break?
     }
   }
  
@@ -195,39 +195,38 @@ void loop()
   printData:
   // Print GPS data to AeroComm
   Serial.println("Writing data to AeroComm");
-  // aero.listen();//**** Why do you have so many aero.listen?  Remove this
   delay(2);  
   if(aero.available()) aero.print(data);// print to write in exact form it received
   
   // Print data to SD Card
   Serial.println("Writing data to SD Card");
-  // openLog.listen(); // Do not need to listen to print data !!
   delay(2);
   openLog.print(data); 
-  data = "";// reset data string? 
+  
+  data = "";// reset data string 
   goto aerocom;
-  //aero.listen();
         
 }
 
 void serialEvent(SoftwareSerial &Port, char endCommand) 
 {
   stringComplete=false;
-  if (Port.available()>0)
+  start = millis();
+  if ((Port.available()>0))
   {
     Serial.println("Getting Data...");
-  while(!stringComplete){
-    // get the new byte:
-    char inChar = (char)Port.read(); 
-    delay(100);
-    // add it to the inputString:
-    if(inChar>0)
-      data += inChar;
-    // if the incoming character is a newline, set a flag
-    // so the main loop can do something about it:
-    if (inChar == endCommand) {
-      stringComplete = true;
+    while( !stringComplete && ((start + WAIT_1) > millis()) ){
+      // get the new byte:
+      char inChar = (char)Port.read(); 
+      delay(100);
+      // add it to the inputString:
+      if(inChar>0)
+        data += inChar;
+      // if the incoming character is the endCommand, set a flag
+      // so the main loop can do something about it:
+      if (inChar == endCommand) {
+        stringComplete = true;
+      }
     }
   }
-}
 }
