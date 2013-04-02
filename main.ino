@@ -1,13 +1,16 @@
-//** Modified Version 
-// Sensors needed to be added 
-// I.T
 /*
  * MultiRX sketch
  * Receive data from two software serial ports
  */
 #include <SoftwareSerial.h>
+
+#define WAIT_flight 3000000
+#define WAIT_com 600000
+#define WAIT_20 20000
+#define WAIT_10 10000
 #define WAIT_5 5000
 #define WAIT_1 1000
+
 // Initialize RX and TX pins
 
 const int rxAero = 10;
@@ -18,6 +21,7 @@ const int rxGPS = 8;
 const int txGPS = 5;
 const int rxSD = 11;
 const int txSD = 3;
+
 const int H_input = A0; // analog pin 0
 const int T1_pin = A1;  // analog pin 1
 const int z_input = A2; // analog pin 2
@@ -26,13 +30,7 @@ const int x_input = A4; // analog pin 4
 const int T2_pin = A5;  // analog pin 5 
 const int prsPin = A6; // digital pin 4
 
-// Variables
-int state =1;
-long int start =0;
-String CUT = "Cut@";
-String SAFE_MOD = "safe@";
-boolean flag = false;
-
+// Initialize sensor parameters
 int rawPr = 0;
 int H_Value = 0;
 int x = 0;
@@ -40,11 +38,23 @@ int y = 0;
 int z = 0;
 int temp1 = 0;
 int temp2 = 0;
-int analogcount;
+int count;
 
 // Initialize parameters for SerialEvent
 String data="";
 boolean stringComplete;
+
+// Initialize other parameters
+unsigned long start = 0;
+unsigned long startEvent = 0;
+unsigned long lastCom;
+unsigned long flightTime;
+const String CUT = "cut@";
+int idx = 0;
+int idx2;
+String temp;
+boolean validAlt = false;
+float alt;
 
 SoftwareSerial aero(rxAero, txAero); // aerocomm device connected to pins 10 and 7
 SoftwareSerial xbee(rxXbee, txXbee); // xbee device connected to pins 9 and 6
@@ -56,7 +66,6 @@ void setup()
   // Initialize serial monitor on computer (for diagnostic purposes)  
   Serial.begin(9600);
   while (!Serial){
-    data.reserve(400);
   }
   
   // Initialize baud rates for all serial devices
@@ -74,63 +83,61 @@ void setup()
   openLog.write(26);
   openLog.write(26);
 
-  delay(WAIT_1);  //delay to make sure command mode is entered
+  delay(1000);  //delay to make sure command mode is entered
 
   openLog.println("new dataFile.txt"); //makes new file named "dataFile.txt"
  
-  delay(WAIT_1); //delay to avoid sadness
+  delay(1000); //delay to avoid sadness
 
   openLog.println("append dataFile.txt");  //says we want to write stuff to "dataFile.txt"
-  delay(WAIT_1); //delay to avoid sadness
+  delay(1000); //delay to avoid sadness
   
   aero.listen(); // Set “AeroComm” to be the active device
+  flightTime = millis();
+  lastCom = millis();
 }
 
 void loop()
-{
-  aerocom:
-  // Skips listening to the aerocomm if in safe mode. 
-  if(flag) {
-    delay(1000);
-    goto sensors; // Do we want data as it's falling or just location?
-  }
-    
-  start = millis();
+{  
+    aerocomm();
+    data += (millis()-flightTime)/1000;
+    data += '#';
+    sensors();
+    gpsData();
+    // Check to see if we've communicated with the ground within the last 10 minutes
+    if ((millis() - lastCom) > WAIT_com)
+    {
+      Serial.println("No communication from ground");
+      getAltitude();
+      checkCut();
+    }
+    Serial.print(data);
+    printData();
+}
+
+void aerocomm() {
   // Listen to the aerocomm for 5 seconds and write received data to xBee  
+  start = millis();
+  aero.listen();
+
   while ( (start + WAIT_5) > millis() ) {
-    aero.listen(); // first listen then for to serial event
-    delay(2);
     if (aero.available() > 0) 
     {
-      Serial.println("Getting data from AeroComm");
-      serialEvent(aero, '@');  
-     
-      // Check if recieved data is "cut" command otherwise do nothing!
-      if(data.equalsIgnoreCase(CUT)) {
-        xbee.print(data);
-        goto printData; // Save data first after cut command
-      }    
-
-      // If we switch to safemode after cut the wires
-      // here is the part we only listen to gps and print data into data logger   ---   ??
-      
-      if(data.equalsIgnoreCase(SAFE_MOD))
-      {
-        flag = true; // only safe mode
-        Serial.println("Entering Safe Mode");
-        //go to GPS and print data from GPS
-        goto gps;
-        // do not need to read from sensors anymore  --- WHY NOT GET MORE DATA ON THE DECENT REGARDLESS?
-      }
+      Serial.println("Getting data from AeroComm...");
+      serialEvent(aero, '@');    
+      lastCom = millis();  // Reset the communication timer 
+      xbee.print(data);  // Print data to the xBee
     }
   }
-  
-  
-  sensors:
-  analogcount = 1; // Was there a reason this was started at 0?
-  do
-  {
-  switch (analogcount){
+  data += '#'; // Add deliminator for data packeting
+}
+
+void sensors() {
+   count = 1; 
+    Serial.println("Getting data from Sensors...");
+    do
+    {
+    switch (count){
         case 1:    // Presure Sensor Reading/Writting
         rawPr = analogRead(prsPin);
         data += String(rawPr); // Add to string
@@ -171,62 +178,131 @@ void loop()
         break;
         
       }// End of reading from Sensors
-      analogcount++; 
-    }while(analogcount < 5);// End of for loop
-    //goto printData; 
-    data += '\n'; 
-
-  gps:
+      count++; 
+    }while(count < 5);// End of for loop
+    data+='#'; // Add deliminator for data packeting
+  }
+  
+void gpsData() {
   // Listen to the GPS for 1 second and write received data to variable data
   start = millis();
-  while ( (start + WAIT_1) > millis() ) {
-    gps.listen();
-    delay(2);
+  gps.listen();
+  delay(200);
+  
+  while ( (start + WAIT_10) > millis() ) {
     if(gps.available() > 0)
     {
-      Serial.println("Getting GPS data");
+      Serial.println("Getting data from GPS...");
       serialEvent(gps, '\n');
-      Serial.println(data);
-      goto printData;
+      data += '\n';
     }
   }
- 
+ }
   
-  printData:
+ void printData() {
+   
   // Print GPS data to AeroComm
   Serial.println("Writing data to AeroComm");
-  delay(2);  
-  if(aero.available()) aero.print(data);// print to write in exact form it received
+  aero.print(data);
   
-  // Print data to SD Card
+  // Print GPS data to SD Card
   Serial.println("Writing data to SD Card");
-  delay(2);
-  openLog.print(data); 
+  openLog.print(data);  
   
-  data = "";// reset data string 
-  goto aerocom;
+  data = "";
         
 }
 
 void serialEvent(SoftwareSerial &Port, char endCommand) 
 {
+  startEvent = millis();
   stringComplete=false;
-  start = millis();
-  if ((Port.available()>0))
+  if (Port.available()>0)
   {
-    Serial.println("Getting Data...");
-    while( !stringComplete && ((start + WAIT_1) > millis()) ){
+    while(!stringComplete && ((startEvent + WAIT_20) > millis())){
       // get the new byte:
       char inChar = (char)Port.read(); 
       delay(100);
       // add it to the inputString:
       if(inChar>0)
         data += inChar;
-      // if the incoming character is the endCommand, set a flag
+      // if the incoming character is a newline, set a flag
       // so the main loop can do something about it:
       if (inChar == endCommand) {
         stringComplete = true;
       }
+  }
+}
+}
+
+void getAltitude()
+{
+  // Remove Sensor Data
+  idx = data.indexOf('#');
+  temp = data.substring(idx+1);
+  idx = temp.indexOf('#');
+  temp = temp.substring(idx+1);
+  if (temp.startsWith("$GPGGA")) // Check to see if gps string is normal
+  {
+    for (count = 0; count < 9; count ++) // Change this back to 9 after testing
+    {
+      idx = temp.indexOf(',');
+      if (idx == -1)
+      {
+        validAlt = false;
+        Serial.println("Invalid GPS String: not enough fields");
+        break;
+      }
+      temp = temp.substring(idx+1);
+    }
+    idx = temp.indexOf(',');
+
+    if ( idx > 0 )
+    {
+      temp = temp.substring(0, idx);
+      validAlt = true;
+    }
+    else
+    {
+      Serial.println("Invalid Altitude: no value");
+      validAlt = false;
+    }
+  }
+  
+  if(validAlt)
+  {
+    char buf[temp.length()];
+    temp.toCharArray(buf,temp.length());
+    alt = atof(buf); 
+    if (alt < 200 || alt > 35000)
+    {
+      Serial.println("Invalid Altitude: not within expected range");
+      validAlt = false;
+    }
+  }
+}
+
+void checkCut()
+{
+  Serial.println("Checking altitude...");
+  if(validAlt)
+  {
+    // Check to see if balloon is above 50000 ft or 15240 m
+    if (alt > 15420)
+    {
+      xbee.print(CUT);
+      data += "Above 50000 ft";
+      Serial.println("Cut command sent");
+    }
+  }
+  else
+  {
+    Serial.println("Checking time of flight...");
+    if ((millis() - flightTime) > WAIT_flight)
+    {
+      xbee.print(CUT);
+      data += "Flight is longer than 50 min";    
+      Serial.println("Cut command sent");  
     }
   }
 }
