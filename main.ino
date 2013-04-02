@@ -189,7 +189,7 @@ void gpsData() {
   gps.listen();
   delay(200);
   
-  while ( (start + WAIT_10) > millis() ) {
+  while ( (start + WAIT_1) > millis() ) {
     if(gps.available() > 0)
     {
       Serial.println("Getting data from GPS...");
