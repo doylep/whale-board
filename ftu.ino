@@ -8,8 +8,8 @@ by the Space Whale team   */
 const int WAIT_5 = 5000;
 const int WAIT_10 = 20000;
 const int cutPin = 8;
+const int indicator = 13;
 const String cutCommand = "cut@";
-const String CutCommand = "Cut@";
 const char STR_END = '@';
 SoftwareSerial xBeeNano(2, 3); // RX, TX
 
@@ -35,6 +35,7 @@ void setup()
 
   // Set cut pin
   pinMode(cutPin, OUTPUT);
+  pinMode(indicator, OUTPUT);
 }
 
 
@@ -48,20 +49,30 @@ void loop()
   {  
     // Send to computer and check for cut
     // Compare lower and upper cases
-    if (data.equals(cutCommand)||data.equalsIgnoreCase(cutCommand))
+    if (data.equalsIgnoreCase(cutCommand))
     {
       // Cutdown balloon
       start = millis();
       while (start + WAIT_10 > millis()) {
         digitalWrite(cutPin, HIGH);
+        digitalWrite(indicator, HIGH);
       }
+    
+    // No cutdown command
+    } else
+    {
       digitalWrite(cutPin, LOW);
+      digitalWrite(indicator, LOW);
     }
+  
+  // Wait if there's no command 
+  } else
+  {
+    digitalWrite(cutPin, LOW);
+    digitalWrite(indicator, LOW);
+    delay(1000);
   }
-
-  // Wait
-  digitalWrite(cutPin, LOW);
-  delay(1000);
+  
   data = "";
 }
 
