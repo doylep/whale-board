@@ -126,7 +126,10 @@ void aerocomm() {
       Serial.println("Getting data from AeroComm...");
       serialEvent(aero, '@');    
       lastCom = millis();  // Reset the communication timer 
-      xbee.print(data);  // Print data to the xBee
+      if(data.equalsIgnoreCase(CUT)) {
+        xbee.print(data);  // Print data to the xBee
+        Serial.println("Cut command sent.");
+      }
     }
   }
   data += '#'; // Add deliminator for data packeting
@@ -185,22 +188,19 @@ void sensors() {
   
 void gpsData() {
   // Listen to the GPS for 1 second and write received data to variable data
-  start = millis();
   gps.listen();
   delay(200);
   
-  while ( (start + WAIT_1) > millis() ) {
     if(gps.available() > 0)
     {
       Serial.println("Getting data from GPS...");
       serialEvent(gps, '\n');
-      data += '\n';
-    }
+    }  
+  data += '#';
   }
- }
   
  void printData() {
-   
+
   // Print GPS data to AeroComm
   Serial.println("Writing data to AeroComm");
   aero.print(data);
@@ -240,6 +240,8 @@ void getAltitude()
   // Remove Sensor Data
   idx = data.indexOf('#');
   temp = data.substring(idx+1);
+  idx = temp.indexOf('#');
+  temp = temp.substring(idx+1);
   idx = temp.indexOf('#');
   temp = temp.substring(idx+1);
   if (temp.startsWith("$GPGGA")) // Check to see if gps string is normal
@@ -285,6 +287,8 @@ void getAltitude()
 void checkCut()
 {
   Serial.println("Checking altitude...");
+  Serial.print("The altitude is:");
+  Serial.println(alt);
   if(validAlt)
   {
     // Check to see if balloon is above 50000 ft or 15240 m
